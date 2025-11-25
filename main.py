@@ -1,6 +1,5 @@
-def main():
-    print("Hello from content-pipeline-agent!")
+from crewai.flow.flow import Flow, listen, start, router, and_, or_
 
-
-if __name__ == "__main__":
-    main()
+class MyFirstFlow(Flow):
+    
+    
