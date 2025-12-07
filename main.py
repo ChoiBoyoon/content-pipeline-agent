@@ -1,5 +1,25 @@
+from calendar import c
+from typing import List
 from crewai.flow.flow import Flow, listen, start, router, and_, or_
+from crewai import Agent
+from crewai import LLM
 from pydantic import BaseModel
+from tools import web_search_tool
+
+class BlogPost(BaseModel):
+    title: str
+    subtitle: str
+    sections: List[str]
+
+class Tweet(BaseModel):
+    content: str
+    hashtags: str
+
+class LinkedInPost(BaseModel):
+    hook: str
+    content: str
+    call_to_acction: str
+
 
 class ContentPipelineState(BaseModel):
     #inputs
@@ -9,6 +29,12 @@ class ContentPipelineState(BaseModel):
     #internal
     max_length: int=0
     score: int=0
+    research: str=""
+
+    #content
+    blog_post: str=""
+    tweet: str=""
+    linkedin_post: str=""
 
 class ContentPipelineFlow(Flow[ContentPipelineState]):
     @start()
@@ -28,29 +54,62 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
 
     @listen(init_content_pipeline)
     def conduct_research(self):
-        print("Researching...")
-        return True
+        researcher = Agent(
+            role="Head Researcher",
+            backstory="You're like a digital detective who loves digging up fascinating facts and insights. You have a knack for finding the good stuff that others miss.",
+            goal=f"Find the most interesting and useful info about {self.state.topic}"
+            tools=[web_search_tool]
+        )
+        self.state.research = researcher.kickoff()
 
     @router(conduct_research)
-    def router(self):
+    def conduct_research_router(self):
         content_type=self.state.content_type
+
         if content_type=="blog":
             return "make_blog"
         elif content_type=="tweet":
             return "make_tweet"
-        else:
+        elif content_type=="linkedin":
             return "make_linkedin_post"
 
-    @listen("make_blog")
+    @listen(or_("make_blog", "remake_blog"))
     def handle_make_blog(self):
+        """
+        if blog post has been made, give the old one to the ai and ask it to improve, else just ask to create a new one.
+        """
         print("Making blog...")
+        blog_post=self.state.blog_post
+        
+        llm = LLM(model="openai/gpt-5-mini", response_format=BlogPost) #return type을 강제할 수 있음
 
-    @listen("make_tweet")
+        if blog_post=="":
+            result = llm.call(f"""
+            Make a blog post on the topic {self.state.topic} using the following research:
+            
+            <research>
+            ===============
+            {self.state.research}
+            ===============
+            </research>
+            """)
+            result.title
+        else:
+            # improve it
+
+
+    @listen(or_("make_tweet", "remake_tweet"))
     def handle_make_tweet(self):
+        """
+        if tweet has been made, give the old one to the ai and ask it to improve, else just ask to create a new one.
+        """
         print("Making tweet...")
     
-    @listen("make_linkedin_post")
+    @listen(or_("make_linkedin_post", "remake_linkedin_post"))
     def handle_make_linkedin_post(self):
+        """
+        if linkedin post has been made, give the old one to the ai and ask it to improve, else just ask to create a new one.
+        """
         print("Making linkedin post...")
 
     @listen(handle_make_blog)
