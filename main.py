@@ -20,6 +20,10 @@ class LinkedInPost(BaseModel):
     content: str
     call_to_acction: str
 
+class Score(BaseModel):
+    score: int=0
+    reason: str=""
+
 
 class ContentPipelineState(BaseModel):
     #inputs
@@ -28,11 +32,12 @@ class ContentPipelineState(BaseModel):
     
     #internal
     max_length: int=0
-    score: int=0
+    # score: int=0
     research: str=""
+    score: Score | None = None
 
     #content
-    blog_post: str=""
+    blog_post: BlogPost | None = None
     tweet: str=""
     linkedin_post: str=""
 
@@ -57,10 +62,10 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         researcher = Agent(
             role="Head Researcher",
             backstory="You're like a digital detective who loves digging up fascinating facts and insights. You have a knack for finding the good stuff that others miss.",
-            goal=f"Find the most interesting and useful info about {self.state.topic}"
+            goal=f"Find the most interesting and useful info about {self.state.topic}",
             tools=[web_search_tool]
         )
-        self.state.research = researcher.kickoff()
+        self.state.research = researcher.kickoff(f"Find the most interesting and useful info about {self.state.topic}")
 
     @router(conduct_research)
     def conduct_research_router(self):
@@ -83,8 +88,8 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         
         llm = LLM(model="openai/gpt-5-mini", response_format=BlogPost) #return type을 강제할 수 있음
 
-        if blog_post=="":
-            result = llm.call(f"""
+        if blog_post is None:
+            self.state.blog_post = llm.call(f"""
             Make a blog post on the topic {self.state.topic} using the following research:
             
             <research>
@@ -93,9 +98,21 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
             ===============
             </research>
             """)
-            result.title
         else:
-            # improve it
+            self.state.blog_post = llm.call(f"""
+            You wrote the following blog post on {self.state.topic}, but it does not have a good SEO score because {self.state.score.reason}. Improve it.
+            <blog_post>
+            {self.state.blog_post.model_dump_jason()}
+            </blog_post>
+
+            Use the following research.
+            
+            <research>
+            ===============
+            {self.state.research}
+            ===============
+            </research>
+            """)
 
 
     @listen(or_("make_tweet", "remake_tweet"))
@@ -114,6 +131,9 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
 
     @listen(handle_make_blog)
     def check_seo(self):
+        print(self.state.blog_post)
+        print("=================")
+        print(self.state.research)
         print("Checking Blog SEO...")
 
     @listen(or_(handle_make_tweet, handle_make_linkedin_post))
@@ -141,5 +161,5 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         print("Finalizing content...")
 
 flow = ContentPipelineFlow()
-flow.plot()
-# flow.kickoff(inputs={"content_type":"tweet", "topic":"AI and ML"})
+# flow.plot()
+flow.kickoff(inputs={"content_type":"blog", "topic":"AI dog training"})
