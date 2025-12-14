@@ -1,5 +1,7 @@
 from calendar import c
 from typing import List
+import json
+import re
 from crewai.flow.flow import Flow, listen, start, router, and_, or_
 from crewai import Agent
 from crewai import LLM
@@ -38,8 +40,8 @@ class ContentPipelineState(BaseModel):
 
     #content
     blog_post: BlogPost | None = None
-    tweet: str=""
-    linkedin_post: str=""
+    tweet: Tweet=""
+    linkedin_post: LinkedInPost=""
 
 class ContentPipelineFlow(Flow[ContentPipelineState]):
     @start()
@@ -63,9 +65,13 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
             role="Head Researcher",
             backstory="You're like a digital detective who loves digging up fascinating facts and insights. You have a knack for finding the good stuff that others miss.",
             goal=f"Find the most interesting and useful info about {self.state.topic}",
-            tools=[web_search_tool]
+            tools=[web_search_tool],
+            max_iter=2  # 테스트 중이므로 반복 횟수 제한
         )
-        self.state.research = researcher.kickoff(f"Find the most interesting and useful info about {self.state.topic}")
+        research_result = researcher.kickoff(f"Find the most interesting and useful info about {self.state.topic}. Keep the response concise and under 500 words.")
+        # Research 결과를 문자열로 변환하고 길이 제한 (테스트 중 토큰 절약)
+        research_str = str(research_result)
+        self.state.research = research_str[:2000] if len(research_str) > 2000 else research_str
 
     @router(conduct_research)
     def conduct_research_router(self):
@@ -86,33 +92,84 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         print("Making blog...")
         blog_post=self.state.blog_post
         
-        llm = LLM(model="openai/gpt-5-mini", response_format=BlogPost) #return type을 강제할 수 있음
+        llm = LLM(model="openai/gpt-5-mini") # 테스트 중 토큰 절약을 위해 max_tokens 제한
 
         if blog_post is None:
-            self.state.blog_post = llm.call(f"""
-            Make a blog post on the topic {self.state.topic} using the following research:
-            
-            <research>
-            ===============
-            {self.state.research}
-            ===============
-            </research>
-            """)
-        else:
-            self.state.blog_post = llm.call(f"""
-            You wrote the following blog post on {self.state.topic}, but it does not have a good SEO score because {self.state.score.reason}. Improve it.
-            <blog_post>
-            {self.state.blog_post.model_dump_jason()}
-            </blog_post>
+            result = llm.call(
+                f"""
+You must return a JSON object matching this exact structure:
+{{
+    "title": "string",
+    "subtitle": "string", 
+    "sections": ["string1", "string2", ...]
+}}
 
-            Use the following research.
+Make a VERY SHORT blog post that can go viral on the topic {self.state.topic}. 
+- Maximum total length: {self.state.max_length} words
+- Keep title under 10 words
+- Keep subtitle under 15 words  
+- Each section should be 2-3 sentences maximum (50 words max per section)
+- Use only 2-3 sections total
+- Return ONLY valid JSON, no additional text before or after
+
+Use the following research:
             
-            <research>
-            ===============
-            {self.state.research}
-            ===============
-            </research>
-            """)
+<research>
+===============
+{self.state.research}
+===============
+</research>
+""",
+                max_tokens=200,  # 테스트 중 토큰 절약
+                temperature=0.3  # 더 결정적인 출력
+            )
+            # JSON 파싱 시도
+            # JSON 부분만 추출
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if json_match:
+                self.state.blog_post = BlogPost(**json.loads(json_match.group()))
+            else:
+                # 파싱 실패 시 직접 파싱 시도
+                self.state.blog_post = BlogPost.model_validate_json(result)
+        else:
+            result = llm.call(
+                f"""
+You must return a JSON object matching this exact structure:
+{{
+    "title": "string",
+    "subtitle": "string", 
+    "sections": ["string1", "string2", ...]
+}}
+
+You wrote the following blog post on {self.state.topic}, but it does not have a good SEO score because {self.state.score.reason}. 
+Improve it while keeping it under {self.state.max_length} words total.
+- Keep title under 10 words
+- Keep subtitle under 15 words  
+- Each section should be 2-3 sentences maximum (50 words max per section)
+- Use only 2-3 sections total
+- Return ONLY valid JSON, no additional text before or after
+
+<blog_post>
+{self.state.blog_post.model_dump_json()}
+</blog_post>
+
+Use the following research:
+            
+<research>
+===============
+{self.state.research}
+===============
+</research>
+""",
+                max_tokens=200,  # 테스트 중 토큰 절약
+                temperature=0.3  # 더 결정적인 출력
+            )
+            # JSON 파싱 시도
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if json_match:
+                self.state.blog_post = BlogPost(**json.loads(json_match.group()))
+            else:
+                self.state.blog_post = BlogPost.model_validate_json(result)
 
 
     @listen(or_("make_tweet", "remake_tweet"))
@@ -121,6 +178,39 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         if tweet has been made, give the old one to the ai and ask it to improve, else just ask to create a new one.
         """
         print("Making tweet...")
+        tweet = self.state.tweet
+        llm = LLM(model = "openai/gpt-5-mini", response_format=Tweet)
+        if tweet is None:
+            self.state.tweet=llm.call(
+                f"""
+                Make a tweet that can go viral on the topic {self.state.topic} using the following research:
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """
+            )
+        else:
+            self.state.tweet=llm.call(
+                f"""
+                You wrote this tweet on {self.state.topic}, but it does not have a good virality score because of {self.state.score.reason}. Improve it.
+
+                <tweet>
+                ===============
+                {self.state.tweet.model_dump_json()}
+                ===============
+                </tweet>
+
+                Use the following research.
+
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """
+            )
     
     @listen(or_("make_linkedin_post", "remake_linkedin_post"))
     def handle_make_linkedin_post(self):
@@ -128,6 +218,40 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         if linkedin post has been made, give the old one to the ai and ask it to improve, else just ask to create a new one.
         """
         print("Making linkedin post...")
+        linkedin_post=self.state.linkedin_post
+        llm = LLM(model="openai/gpt-5-mini", response_format=LinkedInPost)
+        if linkedin_post is None:
+            self.state.linkedin_post=llm.call(
+                f"""
+                Make a linkedin post with SEO practices on the topic {self.state.topic} using the following research:
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """
+            )
+        else:
+            self.state.linkedin_post=llm.call(
+                f"""
+                You wrote this linkedin post on {self.state.topic}, but it does not have a good virality score because of {self.state.score.reason}. Improve it.
+
+                <linkedin_post>
+                ===============
+                {self.state.linkedin_post.model_dump_json()}
+                ===============
+                </linkedin_post>
+
+                Use the following research.
+
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """
+            )
+
 
     @listen(handle_make_blog)
     def check_seo(self):
@@ -162,4 +286,4 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
 
 flow = ContentPipelineFlow()
 # flow.plot()
-flow.kickoff(inputs={"content_type":"blog", "topic":"AI dog training"})
+flow.kickoff(inputs={"content_type":"blog", "topic":"AI pharma"})
