@@ -40,8 +40,8 @@ class ContentPipelineState(BaseModel):
 
     #content
     blog_post: BlogPost | None = None
-    tweet: Tweet=""
-    linkedin_post: LinkedInPost=""
+    tweet: Tweet | None = None
+    linkedin_post: LinkedInPost | None = None
 
 class ContentPipelineFlow(Flow[ContentPipelineState]):
     @start()
@@ -256,12 +256,12 @@ Use the following research:
     @listen(handle_make_blog)
     def check_seo(self):
         print(self.state.blog_post)
-        print("=================")
-        print(self.state.research)
         print("Checking Blog SEO...")
 
     @listen(or_(handle_make_tweet, handle_make_linkedin_post))
     def check_virality(self):
+        print(self.state.tweet)
+        print(self.state.linkedin_post)
         print("Checking virality...")
 
     @router(or_(check_seo, check_virality))
