@@ -7,6 +7,7 @@ from crewai import Agent
 from crewai import LLM
 from pydantic import BaseModel
 from tools import web_search_tool
+from seo_crew import SeoCrew
 
 class BlogPost(BaseModel):
     title: str
@@ -34,7 +35,6 @@ class ContentPipelineState(BaseModel):
     
     #internal
     max_length: int=0
-    # score: int=0
     research: str=""
     score: Score | None = None
 
@@ -97,29 +97,29 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
         if blog_post is None:
             result = llm.call(
                 f"""
-You must return a JSON object matching this exact structure:
-{{
-    "title": "string",
-    "subtitle": "string", 
-    "sections": ["string1", "string2", ...]
-}}
+                You must return a JSON object matching this exact structure:
+                {{
+                    "title": "string",
+                    "subtitle": "string", 
+                    "sections": ["string1", "string2", ...]
+                }}
 
-Make a VERY SHORT blog post that can go viral on the topic {self.state.topic}. 
-- Maximum total length: {self.state.max_length} words
-- Keep title under 10 words
-- Keep subtitle under 15 words  
-- Each section should be 2-3 sentences maximum (50 words max per section)
-- Use only 2-3 sections total
-- Return ONLY valid JSON, no additional text before or after
+                Make a VERY SHORT blog post that can go viral on the topic {self.state.topic}. 
+                - Maximum total length: {self.state.max_length} words
+                - Keep title under 10 words
+                - Keep subtitle under 15 words  
+                - Each section should be 2-3 sentences maximum (50 words max per section)
+                - Use only 2-3 sections total
+                - Return ONLY valid JSON, no additional text before or after
 
-Use the following research:
-            
-<research>
-===============
-{self.state.research}
-===============
-</research>
-""",
+                Use the following research:
+                            
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """,
                 max_tokens=200,  # 테스트 중 토큰 절약
                 temperature=0.3  # 더 결정적인 출력
             )
@@ -134,33 +134,33 @@ Use the following research:
         else:
             result = llm.call(
                 f"""
-You must return a JSON object matching this exact structure:
-{{
-    "title": "string",
-    "subtitle": "string", 
-    "sections": ["string1", "string2", ...]
-}}
+                You must return a JSON object matching this exact structure:
+                {{
+                    "title": "string",
+                    "subtitle": "string", 
+                    "sections": ["string1", "string2", ...]
+                }}
 
-You wrote the following blog post on {self.state.topic}, but it does not have a good SEO score because {self.state.score.reason}. 
-Improve it while keeping it under {self.state.max_length} words total.
-- Keep title under 10 words
-- Keep subtitle under 15 words  
-- Each section should be 2-3 sentences maximum (50 words max per section)
-- Use only 2-3 sections total
-- Return ONLY valid JSON, no additional text before or after
+                You wrote the following blog post on {self.state.topic}, but it does not have a good SEO score because {self.state.score.reason}. 
+                Improve it while keeping it under {self.state.max_length} words total.
+                - Keep title under 10 words
+                - Keep subtitle under 15 words  
+                - Each section should be 2-3 sentences maximum (50 words max per section)
+                - Use only 2-3 sections total
+                - Return ONLY valid JSON, no additional text before or after
 
-<blog_post>
-{self.state.blog_post.model_dump_json()}
-</blog_post>
+                <blog_post>
+                {self.state.blog_post.model_dump_json()}
+                </blog_post>
 
-Use the following research:
-            
-<research>
-===============
-{self.state.research}
-===============
-</research>
-""",
+                Use the following research:
+                            
+                <research>
+                ===============
+                {self.state.research}
+                ===============
+                </research>
+                """,
                 max_tokens=200,  # 테스트 중 토큰 절약
                 temperature=0.3  # 더 결정적인 출력
             )
@@ -171,7 +171,6 @@ Use the following research:
             else:
                 self.state.blog_post = BlogPost.model_validate_json(result)
 
-
     @listen(or_("make_tweet", "remake_tweet"))
     def handle_make_tweet(self):
         """
@@ -181,7 +180,7 @@ Use the following research:
         tweet = self.state.tweet
         llm = LLM(model = "openai/gpt-5-mini", response_format=Tweet)
         if tweet is None:
-            self.state.tweet=llm.call(
+            result=llm.call(
                 f"""
                 Make a tweet that can go viral on the topic {self.state.topic} using the following research:
                 <research>
@@ -192,7 +191,7 @@ Use the following research:
                 """
             )
         else:
-            self.state.tweet=llm.call(
+            result=llm.call(
                 f"""
                 You wrote this tweet on {self.state.topic}, but it does not have a good virality score because of {self.state.score.reason}. Improve it.
 
@@ -211,7 +210,8 @@ Use the following research:
                 </research>
                 """
             )
-    
+        self.state.tweet = Tweet.model_validate_json(result) #CrewAI의 버그. 요청한 object대신 str을 줌..
+
     @listen(or_("make_linkedin_post", "remake_linkedin_post"))
     def handle_make_linkedin_post(self):
         """
@@ -252,11 +252,10 @@ Use the following research:
                 """
             )
 
-
     @listen(handle_make_blog)
     def check_seo(self):
-        print(self.state.blog_post)
-        print("Checking Blog SEO...")
+        result = SeoCrew().crew().kickoff(inputs={'topic':self.state.topic, 'blog_post':self.state.blog_post.model_dump_json()})
+        self.state.score = result.pydantic
 
     @listen(or_(handle_make_tweet, handle_make_linkedin_post))
     def check_virality(self):
@@ -269,8 +268,10 @@ Use the following research:
         content_type = self.state.content_type
         score = self.state.score
 
+        print(score)
+
         #if the score is not high enough, remake the post
-        if score>=8:
+        if score.score>=8:
             return "check_passed"
         else:
             if content_type=="blog":
