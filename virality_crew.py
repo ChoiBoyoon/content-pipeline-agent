@@ -18,4 +18,35 @@ class ViralityCrew:
             verbose=True
         )
 
+    @task
+    def virality_audit(self):
+        return Task(
+            description=f"""Analyze the social media content for viral potential and provide:
+            
+            1. A virality score from 0 to 10 based on:
+            - Hook strength and attention-grabbing potential
+            - Emotional resonance and relatabiltiy
+            - Shareability factor
+            - Call-to-action effectiveness
+            - Platform-specific best practices
+            - Trending topic alignment
+            - Content format optimization
+            
+            2. A clear reason explaining the score, focusing on:
+            - What makes this content likely to go viral (if score is high)
+            - Critical elements missing for virality (if score is low)
+            - The single most important improvement needed
+
+            Content to analyze: {content}
+            Content type: {content_type}
+            Target topic: {topic}
+            """
+            expected_output="""A Score object with:
+            - score: integer from 0 to 10 rating the viral potential
+            - reason: string explaining the main factors affecting virality""",
+            agent=self.virality_expert()
+            output_pydantic=Score,
+        )
+
+
         
