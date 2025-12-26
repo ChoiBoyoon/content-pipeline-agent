@@ -48,5 +48,13 @@ class ViralityCrew:
             output_pydantic=Score,
         )
 
+    @crew
+    def crew(self):
+        return Crew(
+            agents=self.agents,
+            tasks=self.tasks,
+            verbose=True,
+        )
+
 
         

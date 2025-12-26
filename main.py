@@ -8,6 +8,7 @@ from crewai import LLM
 from pydantic import BaseModel
 from tools import web_search_tool
 from seo_crew import SeoCrew
+from virality_crew import ViralityCrew
 
 class BlogPost(BaseModel):
     title: str
@@ -259,9 +260,14 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
 
     @listen(or_(handle_make_tweet, handle_make_linkedin_post))
     def check_virality(self):
-        print(self.state.tweet)
-        print(self.state.linkedin_post)
-        print("Checking virality...")
+        result = (
+            ViralityCrew().crew().kickoff(inputs={
+                "topic":self.state.topic, 
+                "content_type":self.state.content_type,
+                "content": (self.state.tweet.model_dump_json() if self.content.content_type=="tweet" else self.state.linkedin_post.model_dump_json())
+                })
+            self.state.score = result.pydantic
+        )
 
     @router(or_(check_seo, check_virality))
     def score_router(self):
@@ -283,7 +289,20 @@ class ContentPipelineFlow(Flow[ContentPipelineState]):
 
     @listen("check_passed")
     def finalize_content(self):
-        print("Finalizing content...")
+        """Finalize the content"""
+        print("🎉 Finalizing content...")
+        if self.state.content_type == "blog":
+            print(f"📝 Blog Post: {self.state.blog_post.title}")
+            print(f"🔍 SEO Score: {self.state.seo_score}/100")
+        elif self.state.content_type == "tweet":
+            print(f"🐦 Tweet: {self.state.tweet}")
+            print(f"🚀 Virality Score: {self.state.virality_score}/100")
+        elif self.state.content_type == "linkedin":
+            print(f"💼 LinkedIn: {self.state.linkedin_post.title}")
+            print(f"🚀 Virality Score: {self.state.virality_score}/100")
+        
+        print("✅ Content ready for publication!")
+        return (self.state.linkedin_post if self.state.content_type=="linkedin" else (self.state.tweet if self.state.content_type=="tweet" else self.state.blog_post))
 
 flow = ContentPipelineFlow()
 # flow.plot()
